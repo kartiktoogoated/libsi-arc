@@ -44,6 +44,7 @@ impl TinyBuf {
             let dst = self.ptr.as_ptr().add(self.len);
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, bytes.len());
         }
+        self.len += bytes.len();
     }
 
     fn reserve(&mut self, additional: usize) {
@@ -53,7 +54,7 @@ impl TinyBuf {
         }
 
         let mut new_cap = self.cap.max(1);
-        while new_cap <= needed {
+        while new_cap < needed {
             new_cap *= 2;
         }
 
@@ -61,6 +62,22 @@ impl TinyBuf {
             let raw = realloc(self.ptr.as_ptr() as *mut c_void, new_cap) as *mut u8;
             self.ptr = NonNull::new(raw).expect("realloc failed");
             self.cap = new_cap;
+        }
+    }
+
+    fn shrink_to_fit(&mut self) {
+        if self.len == self.cap {
+            return;
+        }
+
+        if self.len == 0 {
+            return;
+        }
+
+        unsafe {
+            let raw = realloc(self.ptr.as_ptr() as *mut c_void, self.len) as *mut u8;
+            self.ptr = NonNull::new(raw).expect("realloc failed");
+            self.cap = self.len;
         }
     }
 }
@@ -102,4 +119,7 @@ fn main() {
     println!("len = {}", buf.len());
     println!("cap = {}", buf.cap());
     println!("text = {}", String::from_utf8_lossy(buf.as_slice()));
+    println!("before shrink: len = {}, cap = {}", buf.len(), buf.cap());
+    buf.shrink_to_fit();
+    println!("after shrink: len = {}, cap = {}", buf.len(), buf.cap());
 }
