@@ -1,15 +1,105 @@
-use std::alloc::{Layout, alloc, dealloc};
+use libc::{c_void, free, malloc, realloc};
+use std::fmt;
+use std::ptr::NonNull;
+use std::slice;
+
+struct TinyBuf {
+    ptr: NonNull<u8>,
+    len: usize,
+    cap: usize,
+}
+
+impl TinyBuf {
+    fn with_capacity(cap: usize) -> Self {
+        assert!(cap > 0, "capacity must be > 0");
+
+        unsafe {
+            let raw = malloc(cap) as *mut u8;
+            let ptr = NonNull::new(raw).expect("malloc failed");
+            Self { ptr, len: 0, cap }
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn cap(&self) -> usize {
+        self.cap
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        unsafe { slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+    }
+
+    fn push(&mut self, byte: u8) {
+        self.reserve(1);
+        unsafe { *self.ptr.as_ptr().add(self.len()) = byte }
+        self.len += 1;
+    }
+
+    fn extend_from_slice(&mut self, bytes: &[u8]) {
+        self.reserve(bytes.len());
+        unsafe {
+            let dst = self.ptr.as_ptr().add(self.len);
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, bytes.len());
+        }
+    }
+
+    fn reserve(&mut self, additional: usize) {
+        let needed = self.len() + additional;
+        if needed <= self.cap() {
+            return;
+        }
+
+        let mut new_cap = self.cap.max(1);
+        while new_cap <= needed {
+            new_cap *= 2;
+        }
+
+        unsafe {
+            let raw = realloc(self.ptr.as_ptr() as *mut c_void, new_cap) as *mut u8;
+            self.ptr = NonNull::new(raw).expect("realloc failed");
+            self.cap = new_cap;
+        }
+    }
+}
+
+impl Drop for TinyBuf {
+    fn drop(&mut self) {
+        unsafe {
+            free(self.ptr.as_ptr() as *mut c_void);
+        }
+    }
+}
+
+impl fmt::Debug for TinyBuf {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Tinybuf")
+            .field("ptr", &self.ptr)
+            .field("len", &self.len)
+            .field("cap", &self.cap)
+            .field("bytes", &self.as_slice())
+            .finish()
+    }
+}
 
 fn main() {
-    unsafe {
-        let layout = Layout::from_size_align(32, 8).unwrap();
-        let p = alloc(layout);
+    let mut buf = TinyBuf::with_capacity(8);
 
-        *p = 10;
-        // let value = *p;
-        println!("{:?}", p);
+    buf.push(b'h');
+    buf.push(b'i');
+    buf.push(b'e');
+    buf.push(b'h');
+    buf.push(b'i');
+    buf.push(b'e');
+    buf.push(b'h');
+    buf.push(b'i');
+    buf.push(b'e');
+    buf.extend_from_slice(b"there");
 
-        dealloc(p, layout);
-        // println!("{}", value);
-    }
+    println!("{:?}", buf);
+    println!("len = {}", buf.len());
+    println!("cap = {}", buf.cap());
+    println!("text = {}", String::from_utf8_lossy(buf.as_slice()));
 }
